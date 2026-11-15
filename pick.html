@@ -144,17 +144,18 @@
   // What Megh can now see inside a chosen folder: the real test of whether a
   // folder grant covers its contents.
   async function countInside(folderId, item) {
-    const q = `'${folderId}' in parents and trashed = false and (mimeType contains 'video/' or mimeType contains 'image/')`;
-    const url = "https://www.googleapis.com/drive/v3/files?pageSize=1000&fields=files(id)&q=" + encodeURIComponent(q);
+    const q = `'${folderId}' in parents and trashed = false`;
+    const url = "https://www.googleapis.com/drive/v3/files?pageSize=1000&fields=files(id,mimeType)&q=" + encodeURIComponent(q);
     try {
       const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
-      const body = await r.json();
-      const n = (body.files || []).length;
+      const files = (await r.json()).files || [];
+      const media = files.filter((f) => f.mimeType.startsWith("video/") || f.mimeType.startsWith("image/")).length;
+      const folders = files.filter((f) => f.mimeType === FOLDER).length;
       const note = document.createElement("span");
       note.className = "muted";
-      note.textContent = n === 0
-        ? " · Megh can't see any videos or photos inside yet. Open the folder and choose them instead."
-        : ` · Megh can see ${n} ${n === 1 ? "video or photo" : "videos and photos"} inside`;
+      note.textContent = files.length === 0
+        ? " · Megh can't see anything inside yet. Open the folder and choose the videos instead."
+        : ` · Megh can see ${files.length} item${files.length === 1 ? "" : "s"} inside: ${media} videos or photos, ${folders} folders`;
       item.append(note);
     } catch (_) { /* The TV will show what it can see either way. */ }
   }
