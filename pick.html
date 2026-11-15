@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Choose what to watch · Megh</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  .card { background: rgba(154, 134, 255, 0.08); border: 1px solid rgba(154, 134, 255, 0.25); border-radius: 16px; padding: 20px; margin: 24px 0; }
+  button {
+    font: inherit; font-weight: 600; color: #fff; background: var(--indigo);
+    border: 0; border-radius: 999px; padding: 14px 28px; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary { background: transparent; border: 1px solid var(--lilac); color: var(--lilac); }
+  #picked li { list-style: none; margin: 6px 0; }
+  #picked { padding: 0; }
+  .error { color: #ff9a9a; }
+</style>
+</head>
+<body>
+<main>
+  <a href="./"><img class="logo" src="megh-lockup.png" alt="megh" width="160" height="90"></a>
+  <h1>Choose what to watch</h1>
+  <p class="lead">Pick the videos, photos or folders you want on your TV. Megh can only see what you choose here.</p>
+  <p class="muted">Sign in with the same Google account you used on the TV.</p>
+
+  <p><button id="choose" disabled>Loading…</button></p>
+  <p id="who" class="muted"></p>
+  <p id="status" class="muted"></p>
+
+  <div id="done" class="card" hidden>
+    <h2 style="margin-top:0">Done</h2>
+    <ul id="picked"></ul>
+    <p>On your TV, open Megh and choose <strong>Check again</strong>.</p>
+    <p><button id="more" class="secondary">Choose more</button></p>
+  </div>
+</main>
+
+<script>
+  // Public by design: a web client ID and a browser key restricted to this site.
+  const CLIENT_ID = "7046226232-65th5hmhgfjq2s6lm87msqneq9i2eh9e.apps.googleusercontent.com";
+  const API_KEY = "AIzaSyAuDteeZGM3PSqUiUIa6p5esD-98iUbZJY";
+  // The Cloud project number: grants made here apply to Megh on the TV too.
+  const APP_ID = "7046226232";
+  const SCOPES = "openid email https://www.googleapis.com/auth/drive.file";
+  const FOLDER = "application/vnd.google-apps.folder";
+
+  const $ = (id) => document.getElementById(id);
+  let tokenClient = null;
+  let pickerReady = false;
+  let token = null;
+
+  function ready() {
+    if (!tokenClient || !pickerReady) return;
+    $("choose").disabled = false;
+    $("choose").textContent = "Choose from Google Drive";
+  }
+
+  function setStatus(text, isError) {
+    $("status").textContent = text;
+    $("status").className = isError ? "error" : "muted";
+  }
+
+  window.gisLoaded = () => {
+    if (!CLIENT_ID || !API_KEY) {
+      setStatus("This page isn't set up yet.", true);
+      return;
+    }
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: async (response) => {
+        if (response.error) {
+          setStatus("Sign-in didn't finish. Try again.", true);
+          return;
+        }
+        if (!google.accounts.oauth2.hasGrantedAllScopes(response, "https://www.googleapis.com/auth/drive.file")) {
+          setStatus("Megh needs the Google Drive permission to see what you choose. Try again and leave it ticked.", true);
+          return;
+        }
+        token = response.access_token;
+        showAccount();
+        openPicker();
+      },
+    });
+    ready();
+  };
+
+  window.gapiLoaded = () => gapi.load("picker", () => { pickerReady = true; ready(); });
+
+  async function showAccount() {
+    try {
+      const r = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: "Bearer " + token } });
+      const info = await r.json();
+      if (info.email) $("who").textContent = "Signed in as " + info.email;
+    } catch (_) { /* Only a label. */ }
+  }
+
+  function choose() {
+    setStatus("");
+    if (token) openPicker();
+    else tokenClient.requestAccessToken();
+  }
+
+  function openPicker() {
+    const P = google.picker;
+    const folders = new P.DocsView(P.ViewId.FOLDERS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setLabel("Folders");
+    const videos = new P.DocsView(P.ViewId.DOCS_VIDEOS).setLabel("Videos");
+    const photos = new P.DocsView(P.ViewId.DOCS_IMAGES).setLabel("Photos");
+    new P.PickerBuilder()
+      .setAppId(APP_ID)
+      .setDeveloperKey(API_KEY)
+      .setOAuthToken(token)
+      .addView(folders)
+      .addView(videos)
+      .addView(photos)
+      .enableFeature(P.Feature.MULTISELECT_ENABLED)
+      .setTitle("Choose what Megh can show")
+      .setCallback(picked)
+      .build()
+      .setVisible(true);
+  }
+
+  async function picked(data) {
+    const P = google.picker;
+    if (data[P.Response.ACTION] !== P.Action.PICKED) return;
+    const docs = data[P.Response.DOCUMENTS];
+    const list = $("picked");
+    list.replaceChildren();
+    for (const doc of docs) {
+      const item = document.createElement("li");
+      const isFolder = doc[P.Document.MIME_TYPE] === FOLDER;
+      item.textContent = (isFolder ? "📁 " : "🎞️ ") + doc[P.Document.NAME];
+      list.append(item);
+      if (isFolder) countInside(doc[P.Document.ID], item);
+    }
+    $("done").hidden = false;
+  }
+
+  // What Megh can now see inside a chosen folder: the real test of whether a
+  // folder grant covers its contents.
+  async function countInside(folderId, item) {
+    const q = `'${folderId}' in parents and trashed = false and (mimeType contains 'video/' or mimeType contains 'image/')`;
+    const url = "https://www.googleapis.com/drive/v3/files?pageSize=1000&fields=files(id)&q=" + encodeURIComponent(q);
+    try {
+      const r = await fetch(url, { headers: { Authorization: "Bearer " + token } });
+      const body = await r.json();
+      const n = (body.files || []).length;
+      const note = document.createElement("span");
+      note.className = "muted";
+      note.textContent = n === 0
+        ? " · Megh can't see any videos or photos inside yet. Open the folder and choose them instead."
+        : ` · Megh can see ${n} ${n === 1 ? "video or photo" : "videos and photos"} inside`;
+      item.append(note);
+    } catch (_) { /* The TV will show what it can see either way. */ }
+  }
+
+  $("choose").addEventListener("click", choose);
+  $("more").addEventListener("click", choose);
+</script>
+<script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
+</html>
