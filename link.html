@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Megh</title>
+<link rel="stylesheet" href="style.css">
+<style>
+  label { display: block; margin: 24px 0 8px; color: var(--muted); }
+  input {
+    font: 600 1.6rem/1.2 ui-monospace, "SF Mono", Consolas, monospace; letter-spacing: 0.12em;
+    width: 100%; max-width: 320px; padding: 12px 16px; text-transform: uppercase;
+    color: var(--text); background: rgba(154, 134, 255, 0.08);
+    border: 1px solid rgba(154, 134, 255, 0.4); border-radius: 12px;
+  }
+  button {
+    font: inherit; font-weight: 600; color: #fff; background: var(--indigo);
+    border: 0; border-radius: 999px; padding: 14px 28px; margin-top: 20px; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .error { color: #ff9a9a; }
+  .done { font-size: 1.3rem; }
+</style>
+</head>
+<body>
+<main>
+  <a href="./"><img class="logo" src="megh-lockup.png" alt="megh" width="160" height="90"></a>
+  <h1>Sign in to Megh on your TV</h1>
+
+  <form id="start">
+    <label for="code">Code shown on your TV</label>
+    <input id="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" maxlength="9">
+    <br>
+    <button id="go" type="submit">Sign in with Google</button>
+    <p class="muted">Google may say it hasn't verified Megh yet. Choose <strong>Continue</strong>, then allow access to your Google Drive.</p>
+  </form>
+
+  <p id="status" class="muted"></p>
+</main>
+
+<script type="module">
+  import { normalizeCode, seal, topic } from "./link-crypto.js";
+
+  // Public by design. The TV swaps the code for tokens with the matching secret.
+  const CLIENT_ID = "7046226232-65th5hmhgfjq2s6lm87msqneq9i2eh9e.apps.googleusercontent.com";
+  // Must match the TV's redirect_uri exactly, whichever address opened this page.
+  const REDIRECT = "https://sh0013.github.io/megh/link.html";
+  const RELAY = "https://ntfy.sh";
+  const SCOPES = "openid email https://www.googleapis.com/auth/drive.readonly";
+
+  const $ = (id) => document.getElementById(id);
+
+  function show(text, kind) {
+    $("status").textContent = text;
+    $("status").className = kind || "muted";
+  }
+
+  function format(code) {
+    return code.length > 4 ? code.slice(0, 4) + "-" + code.slice(4) : code;
+  }
+
+  // Step 1: the code (typed, or from the TV's QR code) sends you to Google.
+  $("code").addEventListener("input", (e) => { e.target.value = format(normalizeCode(e.target.value)); });
+  $("start").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const code = normalizeCode($("code").value);
+    if (code.length !== 8) return show("Enter the 8 letters and numbers shown on your TV.", "error");
+    const auth = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    auth.search = new URLSearchParams({
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT,
+      response_type: "code",
+      scope: SCOPES,
+      access_type: "offline",
+      prompt: "consent select_account",
+      include_granted_scopes: "true",
+      state: code,
+    });
+    location.assign(auth);
+  });
+
+  // Step 2: back from Google. Seal the one-time code for the TV and hand it over.
+  async function finish(params) {
+    $("start").hidden = true;
+    history.replaceState(null, "", location.pathname);
+    const code = normalizeCode(params.get("state") || "");
+    if (params.get("error")) {
+      $("start").hidden = false;
+      $("code").value = format(code);
+      return show("Sign-in was cancelled. Try again, and allow access to your Google Drive.", "error");
+    }
+    if (!(params.get("scope") || "").includes("drive.readonly")) {
+      $("start").hidden = false;
+      $("code").value = format(code);
+      return show("Megh needs to see your Google Drive. Try again and leave the Drive box ticked.", "error");
+    }
+    show("Sending to your TV…");
+    try {
+      const keys = await fetch(`${RELAY}/${await topic("key", code)}/json?poll=1&since=all`).then((r) => r.text());
+      const last = keys.trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((m) => m.event === "message").pop();
+      if (!last) throw new Error("no TV");
+      const tvKey = JSON.parse(last.message).k;
+      const sealed = await seal(tvKey, params.get("code"));
+      const sent = await fetch(`${RELAY}/${await topic("reply", code)}`, { method: "POST", body: JSON.stringify(sealed) });
+      if (!sent.ok) throw new Error("relay " + sent.status);
+      show("Done. Look at your TV: your Drive is loading there.", "done");
+    } catch (err) {
+      $("start").hidden = false;
+      $("code").value = format(code);
+      show(err.message === "no TV"
+        ? "That code isn't on any TV. Check it, or choose Start again on the TV for a new one."
+        : "Couldn't reach your TV. Check your connection and try again.", "error");
+    }
+  }
+
+  const params = new URLSearchParams(location.search);
+  if (params.has("code") || params.has("error")) {
+    finish(params);
+  } else {
+    const fromTv = new URLSearchParams(location.hash.slice(1)).get("c");
+    if (fromTv) $("code").value = format(normalizeCode(fromTv));
+  }
+</script>
+</body>
+</html>

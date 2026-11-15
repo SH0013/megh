@@ -10,16 +10,19 @@
 <main>
   <a href="./"><img class="logo" src="megh-lockup.png" alt="megh" width="160" height="90"></a>
   <h1>Privacy policy</h1>
-  <p class="muted">Last updated 15 November 2026</p>
+  <p class="muted">Last updated 16 November 2026</p>
 
   <p>Megh is a TV app that plays videos and shows photos from your Google Drive. It has no servers of its own: everything happens on your TV, between the app and Google.</p>
 
   <h2>What Megh accesses</h2>
   <ul>
     <li><strong>Your Google account's email address</strong>, to tell your linked accounts apart on the TV.</li>
-    <li><strong>Only the Google Drive files you choose to share with Megh</strong>, using Google's <code>drive.file</code> permission. Megh can't see the rest of your Drive. It reads file names, folders, sizes, thumbnails and the media itself, so it can list and play them.</li>
+    <li><strong>Your Google Drive, read-only</strong>, using Google's <code>drive.readonly</code> permission. Megh reads file names, folders, sizes, thumbnails and the videos and photos themselves, so it can build your library and play it. Other kinds of files are ignored.</li>
   </ul>
-  <p>Megh never changes, uploads or deletes anything in your Drive.</p>
+  <p>Megh can't change, upload or delete anything in your Drive.</p>
+
+  <h2>How signing in works</h2>
+  <p>You sign in with Google on Megh's sign-in page, on your phone or computer. Google gives that page a one-time code, which the page encrypts so that only your TV can read it, and leaves on a public message relay (<a href="https://ntfy.sh">ntfy.sh</a>) for your TV to collect. The relay never sees the code itself, your sign-in, your files or anything else about you. Your TV then completes the sign-in directly with Google.</p>
 
   <h2>Where your data goes</h2>
   <ul>
